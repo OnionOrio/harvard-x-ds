@@ -1,0 +1,79 @@
+---
+title: "trip-advisors-hotel-rating-prediction"
+author: "Orion-lee"
+date: "09/12/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Trip Advisor Hotel Ratings Prediction through User Reviews
+ 
+## 1. Introduction
+
+Moving into the digital age, booking platforms has been providing direct B2C channels and strike the hotel industries. Meanwhile, first person experiences on social medias or any popular tourist platforms, such as Trip Advisor, has accounted for a significant part in customers' perceptions during their purchasing process. However, a good customer rating does not always go align with the traditional aesthetics standard of rating the star-level of a hotel. For example, a cozy hostel at a convenient location can always be rated higher than a renowned luxury one. These kind qualitative quantities are more likely be extracted from the customer reviews instead of the general description, eg. room size, pricing, facilities, etc., of a hotel.
+
+Adapting to the change, business owners set up digital marketing teams to better market themselves online. These teams need not only to focus on the blogs/columns of their own hotels, but also studying the industry leaders in understanding the customer preferences. Nevertheless, reading every piece of reviews is time consuming while building correlations between word descriptions and a hotel rating is seemingly impossible by manual efforts.
+
+Therefore, we will apply our knowledge in Data Science try to predict a rating with only the user reviews and identify if any significant predators (eg. description text) marketers should look for in reading each review. We will use RMSE as our calibration metrics and we target to achieve a RMSE below 0.88 on a 90-10 split of test data.
+
+### 1.1. Data Set
+
+Our data set is downloaded from Kaggle at https://www.kaggle.com/andrewmvd/trip-advisor-hotel-reviews provided andrewmvd, a Kaggle Grandmaster user. To avoid accessing error to the data source, we copied the csv to github at:
+https://raw.githubusercontent.com/OnionOrio/harvard-x-ds/master/DS%20Course/capstone2/tripadvisor_hotel_reviews.csv.
+
+
+```{r reviews}
+# Setup
+
+# Download required packages if they are not installed
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(tidytext)) install.packages("tidytext", repos = "http://cran.us.r-project.org")
+if(!require(textdata)) install.packages("tidytext", repos = "http://cran.us.r-project.org")
+
+# Load libraries
+library(tidyverse)
+library(caret)
+library(data.table)
+library(tidytext)
+library(textdata)
+
+# Download raw data as dataframe
+url <- "https://raw.githubusercontent.com/OnionOrio/harvard-x-ds/master/DS%20Course/capstone2/tripadvisor_hotel_reviews.csv"
+
+dl <- tempfile()
+download.file(url, dl)
+
+reviews <- read_csv(dl)
+
+# Examine the general structure of raw data
+summary(reviews)
+head(reviews)
+
+```
+
+There are only two columns (1) Review, containing the raw text of the user views and (2) Rating, containing the numeric rating given by users ranged from 1 to 5. There is a total of 20491 entries from the data set.
+
+### 1.2. Methodologies
+
+In the last section, we only have the free form text in the raw data input. There is not much we can do so our first task is to extract insights from these data. 
+
+In our ETL process, we will first add general description, thus, data features describing the data (such as, word counts, sentence counts, punctuation counts). After all, we will generate useful numerical summaries from text data through a sentiment analysis on the each sentence of the review.
+
+After obtaining more useful features from the raw data, we will deploy them as predators to train our model. We will start building a prediction by mean rating as our baseline model. Step by step, we will look into different aspects (eg. word counts effect, positve words effect, negative words effect, sentence/paragraph effect, etc.) to see if we can improve our model to reach the targeted RMSE.
+
+During whole the modeling process, we will use a 90-10 spli: 90% as the train set, 10% as the test set.
+
+
+## 2. Data Cleaning and Exploration
+
+```{r}
+
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
