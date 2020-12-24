@@ -148,6 +148,8 @@ first_few_sentence_score <- (compile_sscore(sentence[1,]) + compile_sscore(sente
 
 #Now a function to extract the following data for each reviews
 sentiments_analysis <- function(i){
+  print(i)
+  
   word_count <- reviews[i,] %>%  unnest_tokens(word, Review) %>% nrow()
   
   review_score <- reviews[i,] %>%  unnest_tokens(word, Review) %>% 
@@ -159,11 +161,11 @@ sentiments_analysis <- function(i){
   
   nword <- review_score %>% summarise(n = sum(n)) %>% pull(n)
   
-  negative_score <- review_score %>% filter(sentiments<0) %>% summarise(score = sum(sentiments*n)/sum(n), n = sum(n))
+  negative_score <- review_score %>% filter(sentiments<0) %>% summarise(neg_score = sum(sentiments*n)/sum(n), neg_nword = sum(n), neg_weighted = sum(n)/nword)
   
-  positive_score <- review_score %>% filter(sentiments>0) %>% summarise(score = sum(sentiments*n)/sum(n), n = sum(n), weighted = sum(n)/nword)
+  positive_score <- review_score %>% filter(sentiments>0) %>% summarise(plus_score = sum(sentiments*n)/sum(n), plus_nword = sum(n), plus_weighted = sum(n)/nword)
   
-  neutral_score <- review_score %>% filter(sentiments==0) %>% summarise(score = 0, n = sum(n), weighted = sum(n)/nword)
+  neutral_score <- review_score %>% filter(sentiments==0) %>% summarise(neu_score = 0, neu_nword = sum(n), neu_weighted = sum(n)/nword)
   
   nsentence <- reviews[i,] %>%  unnest_tokens(sentence, Review, token = "regex", pattern = ",+.") %>% nrow()
   
@@ -171,7 +173,9 @@ sentiments_analysis <- function(i){
   
   first_few_sentence_score <- (compile_sscore(sentence[1,]) + compile_sscore(sentence[2,]) + compile_sscore(sentence[3,]) + compile_sscore(sentence[4,]) + compile_sscore(sentence[5,]))/5
   
-  analysis_data <- as.data.frame(id=i, wordc = word_count, nword = nword, negative_score = negative_score, positive_score = positive_score, neutral_score = neutral_score, nsentence = nsentence, first_paragraph_score = first_few_sentence_score)
+  analysis_data <- bind_cols(data.frame(id=i, wordc = word_count, nword = nword, nsentence = nsentence, first_paragraph_score = first_few_sentence_score), negative_score, positive_score, neutral_score)
+  
+  # analysis_data <- data.frame(id=i, wordc = word_count, nword = nword, nsentence = nsentence, first_paragraph_score = first_few_sentence_score)
   
   analysis_data
 }
@@ -188,18 +192,25 @@ i <- seq(1:n)
 
 options(dplyr.summarise.inform = FALSE)
 
-sentiments_analysis_data <- t(sapply(i, sentiments_analysis))
-sentiments_analysis(1)
-head(sentiments_analysis_data)
-sentiments_analysis_data <- t(sentiments_analysis_data)
-df <- as.data.frame(sentiments_analysis_data)
+j <- seq(1:3)
+#sentiments_analysis_data_t <- do.call(rbind, lapply(j, sentiments_analysis))
+head(sentiments_analysis_data_t)
+sentiments_analysis_data_t[1,]
 
-df <- df %>% mutate(id = row_number())
-df
+sentiments_analysis_data <- do.call(rbind, lapply(i, sentiments_analysis))
+head(sentiments_analysis_data)
+sentiments_analysis_data[1,]
+class(sentiments_analysis_data[1,])
+sentiments_analysis_data <- t(sentiments_analysis_data)
+sentiments_analysis_data[1,][1]
+df <- rbind(sentiments_analysis_data)
+df <- sentiments_analysis_data %>% mutate(id = row_number())
+head(df)
 
 final_data <- reviews %>% left_join(df, by="id")
 
-head(final_data)
+head(final_data) 
+final_data[1,]
 
 # Create Training set and Test set from edx
 set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
