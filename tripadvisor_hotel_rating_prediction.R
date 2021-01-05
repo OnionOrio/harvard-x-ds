@@ -77,16 +77,24 @@ get_sentiments("afinn")
 affin <- get_sentiments("afinn") %>%
   select(word, sentiments=value)
 
-affin
-
 # We carefully inspect our datasource and the affin set. There exists a pattern of negation, eg. not recommended, but it will be catched as positive sentiment under our current processing approach. To better analyse these pattern, we add negation affin by changing the sign of the sentiments score.
 
 not_affin <- affin %>% mutate(word = paste("not", word, sep="_"), sentiments = sentiments * -1)
-not_affin
-
-
+head(not_affin)
 naffin <- rbind(affin, not_affin)
 tail(naffin)
+
+# Catching negative prefixes, eg. a-, dis-, in-, un-, non-, il-, ir-, im-
+neg_prefix <- function(prefix){
+  neg_affin <- affin %>% mutate(word = paste(prefix, word, sep=""), sentiments = sentiments * -1)
+  neg_affin
+}
+prefixes <- c("a", "dis", "in", "un", "non", "il", "ir", "im")
+neg_affin <- do.call(rbind, lapply(prefixes, neg_prefix))
+tail(neg_affin)
+head(neg_affin)
+naffin <- rbind(naffin, neg_affin)
+naffin %>% filter(str_detect(word, "not_")) %>% head
 
 filtered_summaries <- filtered_summaries %>% inner_join(naffin, by = "word")
 filtered_summaries %>%  sample_n(5)
@@ -178,11 +186,6 @@ sentiments_analysis <- function(i){
   analysis_data
 }
 
-# Define function calculating the RMSE 
-RMSE <- function(true_ratings, predicted_ratings){
-  sqrt(mean((true_ratings - predicted_ratings)^2))
-}
-
 # Adding sentimental analysis data to Raw data.
 n <- reviews %>% nrow()
 n
@@ -191,15 +194,21 @@ i <- seq(1:n)
 options(dplyr.summarise.inform = FALSE)
 
 sentiments_analysis_data <- do.call(rbind, lapply(i, sentiments_analysis))
+# sentiments_analysis_data_old <- sentiments_analysis_data
 head(sentiments_analysis_data)
 
 df <- sentiments_analysis_data %>% mutate(id = row_number())
 df <- reviews %>% left_join(df, by="id")
 
 df %>% pull(neg_score)
+#Fill NA
+df[is.na(df)] <- 0
 
+df %>% pull(neg_score)
 
-# Create Training set and Test set from edx
+# df_old <- df
+
+# Create Training set and Test set from df
 set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
 test_index <- createDataPartition(y = df$Rating, times = 1, p = 0.1, list = FALSE)
 train_set <- df[-test_index,]
@@ -208,6 +217,11 @@ test_set <- df[test_index,]
 train_set
 
 test_set
+
+# Define function calculating the RMSE 
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
 
 # Build the first model with average rating of a movie from a user
 mu <- mean(train_set$Rating)
@@ -225,7 +239,7 @@ review_words %>% filter(str_detect(word, "not_suggest")) %>% summarize(avg = mea
 review_words %>% filter(str_detect(word, "not_recommend")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 review_words %>% filter(str_detect(word, "horrible")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 
-# If string detect find positive word, rating are below average significantly
+# If string detect find positive word, rating are above average significantly
 review_words %>% filter(str_detect(word, "nice")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 review_words %>% filter(str_detect(word, "good")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 review_words %>% filter(str_detect(word, "decent")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
@@ -234,30 +248,38 @@ review_words %>% filter(str_detect(word, "decent")) %>% summarize(avg = mean(Rat
 fit <- lm(Rating ~ neg_score*neg_weighted, data = train_set)
 fit
 predict_ratings <- predict(fit, test_set)
-RMSE(test_set$Rating, predict_ratings)
+RMSE(predict_ratings, test_set$Rating)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted Negative word effects", RMSE = RMSE(test_set$Rating, predict_ratings))
 
 # Weighted Positive word effect
 fit <- lm(Rating ~ plus_score*plus_weighted, data = train_set)
 fit
 predict_ratings <- predict(fit, test_set)
 RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted Positive word effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
 
 # Weighted Negative and Positive word effect
 fit <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted), data = train_set)
 fit
 predict_ratings <- predict(fit, test_set)
 RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted +/- word effects", RMSE = RMSE(test_set$Rating, predict_ratings))
 
 # first_paragraph_score effect
 fit <- lm(Rating ~ first_paragraph_score, data = train_set)
 predict_ratings <- predict(fit, test_set)
 RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted 1st paragraph effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+
 
 # Weighted Negative and Positive word plus first_para_score effect
 fit <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + first_paragraph_score, data = train_set)
 fit
 predict_ratings <- predict(fit, test_set)
 RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted =/- & 1st para effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
 
 # Mark 5 for prediction > 5 and 1 for prediction < 1
 regulate_boundaries <- function(ratings){
@@ -269,6 +291,9 @@ regulate_boundaries <- function(ratings){
 }
 
 predict_ratings <- regulate_boundaries(predict_ratings)
+
+rmse_results <- rmse_results %>% add_row(method = "Added coerce boundaries", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
 
 # Mini Decision Tree, if the nword is lower than N, we do not apply linear regression and using the mean as prediction instead
 prediction <- function(n){
@@ -292,6 +317,11 @@ data$predict_ratings[index] = mu
 predict_ratings <- data$predict_ratings
 
 RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Replace mu for those with a small sample size of words from sentiment analysis", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
+
+
+# Negative and Positive Dominance
 
 sum(predict_ratings <= 2)
 sum(test_set$Rating <= 2)
@@ -299,54 +329,6 @@ sum(test_set$Rating <= 2)
 sum(predict_ratings >= 4)
 sum(test_set$Rating >= 4)
 
-# Negative and Positive Dominance
-weight <- 0.7
-neg_index <- train_set$neg_weighted >= weight
-train_neg <- train_set[neg_index, ]
-train_temp <- train_set[!neg_index,]
-plus_index <- train_temp$plus_weighted >= weight
-train_plus <- train_temp[plus_index, ]
-train_rest <- train_temp[!plus_index, ]
-
-fit_neg <- lm(Rating ~ neg_score, data=train_neg)
-fit_plus <- lm(Rating ~ plus_score, data=train_plus)
-fit_rest <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + first_paragraph_score, data = train_rest)
-
-neg_index <- test_set$neg_weighted >= weight
-test_neg <- test_set[neg_index, ]
-test_temp <- test_set[!neg_index,]
-plus_index <- test_temp$plus_weighted >= weight
-test_plus <- test_temp[plus_index, ]
-test_rest <- test_temp[!plus_index, ]
-
-test_neg <- test_neg %>% mutate(predict_ratings = predict(fit_neg, test_neg))
-test_neg
-
-test_plus <- test_plus %>% mutate(predict_ratings = predict(fit_plus, test_plus))
-test_plus
-
-test_rest <- test_rest %>% mutate(predict_ratings = predict(fit_rest, test_rest))
-test_rest
-
-test_set
-
-result <- rbind(test_neg, test_plus, test_rest) %>% select(id, predict_ratings)
-result <- test_set %>% left_join(result, by="id")
-result
-
-RMSE(result$Rating, result$predict_ratings)
-
-predict_ratings_dominance <- result$predict_ratings
-
-predict_ratings_dominance <- regulate_boundaries(predict_ratings_dominance)
-
-# Ultimate N is 1
-data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
-index <- data$nword <= 1
-data$predict_ratings[index] = mu
-predict_ratings_dominance <- data$predict_ratings
-
-RMSE(result$Rating, predict_ratings_dominance)
 
 # Select the best fit on weight W
 weights <- seq(0.5, 1.0, 0.025)
@@ -393,4 +375,52 @@ rmse_dominance <- sapply(weights, function(weight){
 plot(weights,rmse_dominance)
 weights[which.min(rmse_dominance)]
 
-rmse_dominance
+weight <- 0.875
+neg_index <- train_set$neg_weighted >= weight
+train_neg <- train_set[neg_index, ]
+train_temp <- train_set[!neg_index,]
+plus_index <- train_temp$plus_weighted >= weight
+train_plus <- train_temp[plus_index, ]
+train_rest <- train_temp[!plus_index, ]
+
+fit_neg <- lm(Rating ~ neg_score, data=train_neg)
+fit_plus <- lm(Rating ~ plus_score, data=train_plus)
+fit_rest <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + first_paragraph_score, data = train_rest)
+
+neg_index <- test_set$neg_weighted >= weight
+test_neg <- test_set[neg_index, ]
+test_temp <- test_set[!neg_index,]
+plus_index <- test_temp$plus_weighted >= weight
+test_plus <- test_temp[plus_index, ]
+test_rest <- test_temp[!plus_index, ]
+
+test_neg <- test_neg %>% mutate(predict_ratings = predict(fit_neg, test_neg))
+test_neg
+
+test_plus <- test_plus %>% mutate(predict_ratings = predict(fit_plus, test_plus))
+test_plus
+
+test_rest <- test_rest %>% mutate(predict_ratings = predict(fit_rest, test_rest))
+test_rest
+
+test_set
+
+result <- rbind(test_neg, test_plus, test_rest) %>% select(id, predict_ratings)
+result <- test_set %>% left_join(result, by="id")
+result
+
+RMSE(result$Rating, result$predict_ratings)
+
+predict_ratings_dominance <- result$predict_ratings
+
+predict_ratings_dominance <- regulate_boundaries(predict_ratings_dominance)
+
+# Ultimate N is 1
+data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
+index <- data$nword <= 1
+data$predict_ratings[index] = mu
+predict_ratings_dominance <- data$predict_ratings
+
+RMSE(result$Rating, predict_ratings_dominance)
+rmse_results <- rmse_results %>% add_row(method = "+/- dominance effects", RMSE = RMSE(test_set$Rating, predict_ratings_dominance))
+rmse_results

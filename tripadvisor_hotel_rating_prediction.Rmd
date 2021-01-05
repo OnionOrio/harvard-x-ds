@@ -17,7 +17,7 @@ Moving into the digital age, booking platforms has been providing direct B2C cha
 
 Adapting to the change, business owners set up digital marketing teams to better market themselves online. These teams need not only to focus on the blogs/columns of their own hotels, but also studying the industry leaders in understanding the customer preferences. Nevertheless, reading every piece of reviews is time consuming while building correlations between word descriptions and a hotel rating is seemingly impossible by manual efforts.
 
-Therefore, we will apply our knowledge in Data Science try to predict a rating with only the user reviews and identify if any significant predators (eg. description text) marketers should look for in reading each review. We will use RMSE as our calibration metrics and we target to achieve a RMSE below 0.88 on a 90-10 split of test data.
+Therefore, we will apply our knowledge in Data Science try to predict a rating with only the user reviews and identify if any significant predictors (eg. description text) marketers should look for in reading each review. We will use RMSE as our calibration metrics and we target to achieve a RMSE below 0.89 on a 90-10 split of test data.
 
 ### 1.1. Data Set
 
@@ -62,18 +62,513 @@ There are only two columns (1) Review, containing the raw text of the user views
 
 In the last section, we only have the free form text in the raw data input. There is not much we can do so our first task is to extract insights from these data. 
 
-In our ETL process, we will first add general description, thus, data features describing the data (such as, word counts, sentence counts, punctuation counts). After all, we will generate useful numerical summaries from text data through a sentiment analysis on the each sentence of the review.
+In our ETL process, we will first add general description, thus, data features describing the data (such as, word counts, sentence counts). After all, we will generate useful numerical summaries from text data through a sentiment analysis on the each sentence of the review.
 
-After obtaining more useful features from the raw data, we will deploy them as predators to train our model. We will start building a prediction by mean rating as our baseline model. Step by step, we will look into different aspects (eg. word counts effect, positve words effect, negative words effect, sentence/paragraph effect, etc.) to see if we can improve our model to reach the targeted RMSE.
+After obtaining more useful features from the raw data, we will deploy them as predictors to train our model. We will start building a prediction by mean rating as our baseline model. Step by step, we will look into different aspects (eg. word counts effect, positive words effect, negative words effect, first sentence effect, etc.) to see if we can improve our model to reach the targeted RMSE.
 
-During whole the modeling process, we will use a 90-10 spli: 90% as the train set, 10% as the test set.
+During whole the modeling process, we will use a 90-10 split: 90% as the train set, 10% as the test set.
 
 
 ## 2. Data Cleaning and Exploration
 
-```{r}
+### 2.1. Data Cleaning
 
+We will use the 100th entry as an example and look closely to the raw data.
+
+```{r}
+# We will take a look at the 100th review as example
+
+i <- 100
+
+# wrap review into paragraphs 
+
+reviews$Review[i] %>%  str_wrap(width = 65) %>%  cat()
+
+reviews[i,] %>%  unnest_tokens(sentence, Review, token = "regex", pattern = ",+.")
+
+# convert the review into words
+
+reviews[i,] %>% 
+  unnest_tokens(word, Review) %>% 
+  pull(word)
+
+reviews[i,] %>% 
+  unnest_tokens(sentence, Review, token="sentences") %>% 
+  pull(sentence)
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+For the first step in processing the data by words, we convert all words into lower case. Then, we combine the negation with the next word when encountering 'not', 'n't' into 'not_'. For example, 'n't good' becomes 'not_good'.
+
+```{r}
+# convert all reviews in word data
+reviews <- reviews %>% mutate(Review = tolower(Review))
+reviews <- reviews %>% mutate(Review = str_replace_all(tolower(Review), "not |n't ", "not_"))
+
+reviews[100,] %>%  str_wrap(width = 65) %>%  cat()
+```
+
+We have a lot of words that are neutral that are not contributing to the rating. Thus, we need to filter out these not informative words. One of the ways is apply the stop_words database from the tidytext package.
+
+```{r}
+
+stop_words
+
+filtered_words <- review_words %>% filter(!word %in% stop_words$word & !str_detect(word, "^\\d+$"))
+
+filtered_summaries <- filtered_words %>% group_by(word) %>% summarise(n = n(), avg = mean(Rating))
+
+filtered_summaries %>% filter(avg<=2) %>%  arrange(desc(n))
+
+filtered_summaries %>% filter(avg>=4.5) %>%  arrange(desc(n))
+
+filtered_summaries %>% arrange(desc(n))
+
+```
+
+###2.2 Exploration - Sentiment Analysis
+
+One of the popular text mining process is the sentiment analysis which provide the favorablility of a word. The choice of words reflect the emotion of a person which will be definitely useful in predicting the rating if we can know a piece of text is positive or not.
+
+We will use the tidytext and textdata package to conduct our sentiment analysis
+
+```{r}
+get_sentiments("afinn")
+
+affin <- get_sentiments("afinn") %>%
+  select(word, sentiments=value)
+```
+
+We carefully inspect our datasource and the afinn set. There does not exist a pattern of negation, eg. not recommended, unhelpful, but the negative sentiment counts a crucial part in our analysis. To catch these negation, we add negation afinn by changing the sign of the sentiments score.
+
+```{r}
+# Catching not_ pattern
+not_affin <- affin %>% mutate(word = paste("not", word, sep="_"), sentiments = sentiments * -1)
+head(not_affin)
+naffin <- rbind(affin, not_affin)
+tail(naffin)
+
+# Catching negative prefixes, eg. a-, dis-, in-, un-, non-, il-, ir-, im-
+neg_prefix <- function(prefix){
+  neg_affin <- affin %>% mutate(word = paste(prefix, word, sep=""), sentiments = sentiments * -1)
+  neg_affin
+}
+prefixes <- c("a", "dis", "in", "un", "non", "il", "ir", "im")
+neg_affin <- do.call(rbind, lapply(prefixes, neg_prefix))
+tail(neg_affin)
+head(neg_affin)
+naffin <- rbind(naffin, neg_affin)
+naffin %>% filter(str_detect(word, "not_")) %>% head
+```
+
+We have prepared a set of positive and negative words for the sentiment analysis. We join these to the filtered words and inspect the pattern further.
+
+```{r}
+# Inner join naffin with filtered words
+filtered_summaries <- filtered_summaries %>% inner_join(naffin, by = "word")
+filtered_summaries %>%  sample_n(5)
+
+filtered_summaries %>% filter(avg<=2) %>%  arrange(desc(n))
+
+filtered_summaries %>% filter(avg>=4.5) %>%  arrange(desc(n))  
+
+filtered_summaries <- filtered_summaries %>% mutate(sscore = (sentiments+5)/2)
+
+filtered_summaries %>% filter(sentiments==-5)
+
+filtered_summaries %>% mutate(sscore = as.factor(sscore)) %>% filter(n >= 5) %>%  ggplot(aes(x = sscore, y = avg)) + geom_boxplot()
+```
+
+We can see that starting from sentiment score (i.e. sscore) 1, a more positive word contribute to a highter review rating on average. This gives hints on the direction of our prediction model. So, the next step we will incorporate the sentiment score into each review.
+
+### 2.3 Data preparation
+
+First, we add an ID for each review for identification. It helps to join tables of data later.
+
+```{r}
+reviews <- reviews %>% mutate(id = row_number())
+reviews
+
+```
+
+We build a function complile score to calulate the average sscore given an input text, return 0 if no words are detected.
+
+```{r}
+compile_sscore <- function(text){
+  words <- text %>% unnest_tokens(word, sentence) %>% 
+    filter(!word %in% stop_words$word & !str_detect(word, "^\\d+$")) %>% 
+    inner_join(naffin, by = "word") %>% 
+    group_by(sentiments) %>%
+    summarise(n = n())
+  
+  sscore <- words %>% summarise(score = sum(sentiments*n)/sum(n)) %>% pull(score)
+  if(is.nan(sscore))
+    0
+  else
+    sscore
+}
+```
+
+In order to study the word counts effect, positive words effect, negative words effect and first paragraph effect, we calculate the scores for (1) positive words, (2) negative words and (3) first paragraph words of each review. Again, we use the 100th review as an example to illustrate the steps.
+
+```{r}
+# We will use the 100th as an example
+word_count <- reviews[i,] %>%  unnest_tokens(word, Review) %>% nrow()
+
+review_score <- reviews[i,] %>%  unnest_tokens(word, Review) %>% 
+  filter(!word %in% stop_words$word & !str_detect(word, "^\\d+$")) %>% 
+  inner_join(naffin, by = "word") %>%  
+  mutate(sscore = (sentiments+5)/2) %>% 
+  group_by(sentiments) %>% 
+  summarise(n = n())
+
+nword <- review_score %>% summarise(n = sum(n)) %>% pull(n)
+
+negative_score <- review_score %>% filter(sentiments<0) %>% summarise(score = sum(sentiments*n)/sum(n), n = sum(n))
+
+positive_score <- review_score %>% filter(sentiments>0) %>% summarise(score = sum(sentiments*n)/sum(n), n = sum(n), weighted = sum(n)/nword)
+
+neutral_score <- review_score %>% filter(sentiments==0) %>% summarise(score = 0, n = sum(n), weighted = sum(n)/nword)
+
+nsentence <- reviews[i,] %>%  unnest_tokens(sentence, Review, token = "regex", pattern = ",+.") %>% nrow()
+
+sentence <- reviews[i,] %>%  unnest_tokens(sentence, Review, token = "regex", pattern = ",+.")
+
+first_few_sentence_score <- (compile_sscore(sentence[1,]) + compile_sscore(sentence[2,]) + compile_sscore(sentence[3,]) + compile_sscore(sentence[4,]) + compile_sscore(sentence[5,]))/5
+
+# Inspecting the new data attribute
+nword
+negative_score
+positive_score
+neutral_score
+nsentence
+first_few_sentence_score
+```
+
+We have created useful new attributes from the review text: nword, negative_score, positive_score, neutral_score, nsentence and first_few_sentence_score, etc. These quantitative attributes becomes the predictors allowing us to apply machine learning models on the review ratings. We build a function to calculate the dataset of sentiment analysis for all the reviews.
+
+
+
+```{r}
+#Now a function to extract the following data for each reviews
+sentiments_analysis <- function(i){
+  print(i)
+  
+  word_count <- reviews[i,] %>%  unnest_tokens(word, Review) %>% nrow()
+  
+  review_score <- reviews[i,] %>%  unnest_tokens(word, Review) %>% 
+    filter(!word %in% stop_words$word & !str_detect(word, "^\\d+$")) %>% 
+    inner_join(naffin, by = "word") %>%  
+    mutate(sscore = (sentiments+5)/2) %>% 
+    group_by(sentiments) %>% 
+    summarise(n = n())
+  
+  nword <- review_score %>% summarise(n = sum(n)) %>% pull(n)
+  
+  negative_score <- review_score %>% filter(sentiments<0) %>% summarise(neg_score = sum(sentiments*n)/sum(n), neg_nword = sum(n), neg_weighted = sum(n)/nword)
+  
+  positive_score <- review_score %>% filter(sentiments>0) %>% summarise(plus_score = sum(sentiments*n)/sum(n), plus_nword = sum(n), plus_weighted = sum(n)/nword)
+  
+  neutral_score <- review_score %>% filter(sentiments==0) %>% summarise(neu_score = 0, neu_nword = sum(n), neu_weighted = sum(n)/nword)
+  
+  nsentence <- reviews[i,] %>%  unnest_tokens(sentence, Review, token = "regex", pattern = ",+.") %>% nrow()
+  
+  sentence <- reviews[i,] %>%  unnest_tokens(sentence, Review, token = "regex", pattern = ",+.")
+  
+  first_few_sentence_score <- (compile_sscore(sentence[1,]) + compile_sscore(sentence[2,]) + compile_sscore(sentence[3,]) + compile_sscore(sentence[4,]) + compile_sscore(sentence[5,]))/5
+  
+  analysis_data <- bind_cols(data.frame(id=i, wordc = word_count, nword = nword, nsentence = nsentence, first_paragraph_score = first_few_sentence_score), negative_score, positive_score, neutral_score)
+  
+  analysis_data
+}
+
+# Adding sentimental analysis data to Raw data.
+n <- reviews %>% nrow()
+n
+i <- seq(1:n)
+
+options(dplyr.summarise.inform = FALSE)
+
+sentiments_analysis_data <- do.call(rbind, lapply(i, sentiments_analysis))
+head(sentiments_analysis_data)
+
+df <- sentiments_analysis_data %>% mutate(id = row_number())
+df <- reviews %>% left_join(df, by="id")
+
+df %>% pull(neg_score)
+
+#Fill NA
+df[is.na(df)] <- 0
+
+df %>% pull(neg_score)
+
+head(df)
+```
+
+Now, our dataset-df for buildling the prediction model is ready.
+
+## 4. Prediction Models
+
+We are using RMSE as our calibration metrics and a 90-10 split for training & testing data. Thus, we first build a function calculating the RMSE and the train_set & test_set accordingly.
+
+```{r}
+# Create Training set and Test set from df
+set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
+test_index <- createDataPartition(y = df$Rating, times = 1, p = 0.1, list = FALSE)
+train_set <- df[-test_index,]
+test_set <- df[test_index,]
+
+train_set
+
+test_set
+
+# Define function calculating the RMSE 
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+### 4.1 Native model - Just the average
+
+```{r}
+# Build the first model with average rating of a movie from a user
+mu <- mean(train_set$Rating)
+
+# RMSE of the first model
+naive_rmse <- RMSE(test_set$Rating, mu)
+naive_rmse
+
+# Create a result tables for rmse alongside the improvement of the model 
+rmse_results <- tibble(method = "Just the average", RMSE = naive_rmse)
+rmse_results
+```
+
+### 4.2 Weighted Negative word effects
+```{r}
+# If string detect find negative word, rating are below average significantly
+review_words %>% filter(str_detect(word, "not_suggest")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "not_recommend")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "horrible")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+
+# If string detect find positive word, rating are above average significantly
+review_words %>% filter(str_detect(word, "nice")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "good")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "decent")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+```
+
+```{r}
+# Weighted Negative word effect
+fit <- lm(Rating ~ neg_score*neg_weighted, data = train_set)
+predict_ratings <- predict(fit, test_set)
+RMSE(predict_ratings, test_set$Rating)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted Negative word effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+```
+
+### 4.3 Weighted Positive word effects
+```{r}
+# Weighted Positive word effect
+fit <- lm(Rating ~ plus_score*plus_weighted, data = train_set)
+predict_ratings <- predict(fit, test_set)
+RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted Positive word effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
+
+# Weighted Negative and Positive word effect
+fit <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted), data = train_set)
+predict_ratings <- predict(fit, test_set)
+RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted +/- word effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
+```
+
+### 4.4 First paragraph score effects
+```{r}
+# first_paragraph_score effect
+fit <- lm(Rating ~ first_paragraph_score, data = train_set)
+predict_ratings <- predict(fit, test_set)
+RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted 1st paragraph effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+
+
+# Weighted Negative and Positive word plus first_para_score effect
+fit <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + first_paragraph_score, data = train_set)
+predict_ratings <- predict(fit, test_set)
+RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Added Weighted =/- & 1st para effects", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
+```
+
+### 4.5 Coerce Rating boundaries
+```{r}
+# Mark 5 for prediction > 5 and 1 for prediction < 1
+regulate_boundaries <- function(ratings){
+  index_5 <- ratings > 5
+  ratings[index_5] = 5
+  index_1 <- ratings < 1
+  ratings[index_1] = 1
+  ratings
+}
+
+predict_ratings <- regulate_boundaries(predict_ratings)
+
+rmse_results <- rmse_results %>% add_row(method = "Added coerce boundaries", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
+```
+
+### 4.6 Mini Decision Tree
+```{r}
+# Mini Decision Tree, if the nword is lower than N, we do not apply linear regression and using the mean as prediction instead
+prediction <- function(n){
+  data <- test_set %>% mutate(predict_ratings = predict_ratings)
+  index <- data$nword <= n
+  data$predict_ratings[index] = mu
+  results <- data$predict_ratings
+  RMSE(test_set$Rating, results)
+}
+
+n <- seq(0,10,1)
+n
+
+rmse_list <- sapply(n, prediction)
+n[which.min(rmse_list)]
+
+# Ultimate N is 1
+data <- test_set %>% mutate(predict_ratings = predict_ratings)
+index <- data$nword <= 1
+data$predict_ratings[index] = mu
+predict_ratings <- data$predict_ratings
+
+RMSE(test_set$Rating, predict_ratings)
+rmse_results <- rmse_results %>% add_row(method = "Replace mu for those with a small sample size of words from sentiment analysis", RMSE = RMSE(test_set$Rating, predict_ratings))
+rmse_results
+```
+
+### 4.7 +/- Dominance
+```{r}
+# Negative and Positive Dominance
+
+sum(predict_ratings <= 2)
+sum(test_set$Rating <= 2)
+
+sum(predict_ratings >= 4)
+sum(test_set$Rating >= 4)
+
+
+# Select the best fit on weight W
+weights <- seq(0.5, 1.0, 0.025)
+weights
+
+rmse_dominance <- sapply(weights, function(weight){
+  neg_index <- train_set$neg_weighted >= weight
+  train_neg <- train_set[neg_index, ]
+  train_temp <- train_set[!neg_index,]
+  plus_index <- train_temp$plus_weighted >= weight
+  train_plus <- train_temp[plus_index, ]
+  train_rest <- train_temp[!plus_index, ]
+  
+  fit_neg <- lm(Rating ~ neg_score, data=train_neg)
+  fit_plus <- lm(Rating ~ plus_score, data=train_plus)
+  fit_rest <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + first_paragraph_score, data = train_rest)
+  
+  neg_index <- test_set$neg_weighted >= weight
+  test_neg <- test_set[neg_index, ]
+  test_temp <- test_set[!neg_index,]
+  plus_index <- test_temp$plus_weighted >= weight
+  test_plus <- test_temp[plus_index, ]
+  test_rest <- test_temp[!plus_index, ]
+  
+  test_neg <- test_neg %>% mutate(predict_ratings = predict(fit_neg, test_neg))
+  test_plus <- test_plus %>% mutate(predict_ratings = predict(fit_plus, test_plus))
+  test_rest <- test_rest %>% mutate(predict_ratings = predict(fit_rest, test_rest))
+  result <- rbind(test_neg, test_plus, test_rest) %>% select(id, predict_ratings)
+  result <- test_set %>% left_join(result, by="id")
+  
+  predict_ratings_dominance <- result$predict_ratings
+  
+  predict_ratings_dominance <- regulate_boundaries(predict_ratings_dominance)
+  
+  # Ultimate N is 1
+  data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
+  index <- data$nword <= 1
+  data$predict_ratings[index] = mu
+  predict_ratings_dominance <- data$predict_ratings
+  
+  RMSE(result$Rating, predict_ratings_dominance)
+})
+
+plot(weights,rmse_dominance)
+weights[which.min(rmse_dominance)]
+
+weight <- 0.875
+neg_index <- train_set$neg_weighted >= weight
+train_neg <- train_set[neg_index, ]
+train_temp <- train_set[!neg_index,]
+plus_index <- train_temp$plus_weighted >= weight
+train_plus <- train_temp[plus_index, ]
+train_rest <- train_temp[!plus_index, ]
+
+fit_neg <- lm(Rating ~ neg_score, data=train_neg)
+fit_plus <- lm(Rating ~ plus_score, data=train_plus)
+fit_rest <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + first_paragraph_score, data = train_rest)
+
+neg_index <- test_set$neg_weighted >= weight
+test_neg <- test_set[neg_index, ]
+test_temp <- test_set[!neg_index,]
+plus_index <- test_temp$plus_weighted >= weight
+test_plus <- test_temp[plus_index, ]
+test_rest <- test_temp[!plus_index, ]
+
+test_neg <- test_neg %>% mutate(predict_ratings = predict(fit_neg, test_neg))
+test_neg
+
+test_plus <- test_plus %>% mutate(predict_ratings = predict(fit_plus, test_plus))
+test_plus
+
+test_rest <- test_rest %>% mutate(predict_ratings = predict(fit_rest, test_rest))
+test_rest
+
+test_set
+
+result <- rbind(test_neg, test_plus, test_rest) %>% select(id, predict_ratings)
+result <- test_set %>% left_join(result, by="id")
+result
+
+RMSE(result$Rating, result$predict_ratings)
+
+predict_ratings_dominance <- result$predict_ratings
+
+predict_ratings_dominance <- regulate_boundaries(predict_ratings_dominance)
+```
+
+```{r}
+prediction_dominance <- function(n){
+  data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
+  index <- data$nword <= n
+  data$predict_ratings[index] = mu
+  results <- data$predict_ratings
+  RMSE(test_set$Rating, results)
+}
+
+n <- seq(0,10,1)
+n
+
+rmse_list <- sapply(n, prediction_dominance)
+n[which.min(rmse_list)]
+
+data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
+index <- data$nword <= n[which.min(rmse_list)]
+data$predict_ratings[index] = mu
+predict_ratings_dominance <- data$predict_ratings
+
+RMSE(result$Rating, predict_ratings_dominance)
+rmse_results <- rmse_results %>% add_row(method = "+/- dominance effects", RMSE = RMSE(test_set$Rating, predict_ratings_dominance))
+rmse_results
+```
+
+## 5. Conclusion
+
+```{r}
+rmse_results
+```
+
+Instead of just learning the word by sentiment analysis, we could further extract words as an attribute describing the hotels, eg. expensive referring to price, comfortable referring to room quality. This can be achieved through NLP. After the extraction of these features from a review, we can further conduct a comparison analysis with an official descriptive information stated by a hotel on the booking source, eg. Booking.com. Any difference can improve our prediction in review rating as these explains the expectation +/- a user anticipated for a hotel.
