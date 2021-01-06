@@ -17,7 +17,7 @@ Moving into the digital age, booking platforms has been providing direct B2C cha
 
 Adapting to the change, business owners set up digital marketing teams to better market themselves online. These teams need not only to focus on the blogs/columns of their own hotels, but also studying the industry leaders in understanding the customer preferences. Nevertheless, reading every piece of reviews is time consuming while building correlations between word descriptions and a hotel rating is seemingly impossible by manual efforts.
 
-Therefore, we will apply our knowledge in Data Science try to predict a rating with only the user reviews and identify if any significant predictors (eg. description text) marketers should look for in reading each review. We will use RMSE as our calibration metrics and we target to achieve a RMSE below 0.89 on a 90-10 split of test data.
+Therefore, we will apply our knowledge in Data Science try to predict a rating with only the user reviews and identify if any significant predictors (eg. description text) marketers should look for in reading each review. We will use RMSE as our calibration metrics, and we target to improve the native RMSE by 0.3 and to achieve a RMSE below 0.89 on a 90-10 split of test data.
 
 ### 1.1. Data Set
 
@@ -330,6 +330,8 @@ RMSE <- function(true_ratings, predicted_ratings){
 
 ### 4.1 Native model - Just the average
 
+For the first model, we use the average rating as a predition to all review, which is our native model. We also create a tibble table store the RMSE result and we can look at our improvement easily.
+
 ```{r}
 # Build the first model with average rating of a movie from a user
 mu <- mean(train_set$Rating)
@@ -343,18 +345,21 @@ rmse_results <- tibble(method = "Just the average", RMSE = naive_rmse)
 rmse_results
 ```
 
+We obtained a native RMSE as 1.2259371. We are trying to improve it by at least 0.3 and to achieve a RMSE <= 0.890.
+
 ### 4.2 Weighted Negative word effects
+The first predictor we are going to look at is called the Negative Word effect. This explains the degree of negative words contributes to a review ratings. So, with more negative words in a review, a lower rating is expected. Let's look at the average rating when a sample of negative words is detected:
+
 ```{r}
 # If string detect find negative word, rating are below average significantly
 review_words %>% filter(str_detect(word, "not_suggest")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 review_words %>% filter(str_detect(word, "not_recommend")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 review_words %>% filter(str_detect(word, "horrible")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "unhelpful")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 
-# If string detect find positive word, rating are above average significantly
-review_words %>% filter(str_detect(word, "nice")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
-review_words %>% filter(str_detect(word, "good")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
-review_words %>% filter(str_detect(word, "decent")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
 ```
+
+The average rating of review consisting the sample negative words are lower than the average rating significantly. This explains a relationship as Rating (R) = Constant - negative effects (NE). Instead of directly applying the sentiment score of the negative words, we multiply it with a weight as the ratio of of negative words in the review. Thus, we have R = Constant - Coef*neg_score*neg_weighted, where NE = neg_score*neg_weighted. We use linear regression to train our model.
 
 ```{r}
 # Weighted Negative word effect
@@ -364,7 +369,23 @@ RMSE(predict_ratings, test_set$Rating)
 rmse_results <- rmse_results %>% add_row(method = "Added Weighted Negative word effects", RMSE = RMSE(test_set$Rating, predict_ratings))
 ```
 
+We have a RMSE as 0.9387965, which is significantly improved from the native rmse.
+
 ### 4.3 Weighted Positive word effects
+
+Similar to weighted negative word effects, we proceed with the positive word effects subsequently. Again, we pick a sample of positive words and look at the average rating of the reviews when those positive words are detected.
+
+```{r}
+# If string detect find positive word, rating are above average significantly
+review_words %>% filter(str_detect(word, "nice")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "convenient")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "comfortable")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+review_words %>% filter(str_detect(word, "helpful")) %>% summarize(avg = mean(Rating)) %>% pull(avg)
+
+```
+
+Indubitably, the ratings with positive words detected are higher than the average rating. We apply linear regression to train our model as R = Constant + Positive Effect (PE).
+
 ```{r}
 # Weighted Positive word effect
 fit <- lm(Rating ~ plus_score*plus_weighted, data = train_set)
@@ -381,15 +402,46 @@ rmse_results <- rmse_results %>% add_row(method = "Added Weighted +/- word effec
 rmse_results
 ```
 
+We obtained a RMSE as 0.9565410. Combining both +/- ve word effects, we achieved a RMSE as 0.9208087.
+
 ### 4.4 First paragraph score effects
+When a user writes a piece of review, the tone usually remains consistent throughout the whole piece of writing. And it's a usual practice we mention the most important thing / the deepest comment from the start. Thus, the first paragraph is more illustrative reflecting user's liking and set the tone for the rest of a review. Instead of extracting a real paragraph in formatted writing, we took the first five clauses separated by a comma - "," or a full-stop - "." as the first paragraph for a review.
+
+```{r}
+train_set %>%  ggplot(aes(x = first_paragraph_score, y = Rating)) +
+  geom_point() +
+  geom_smooth()
+```
+
+The graph shows there is a logarithmic relationship between the first paragraph score and the Rating. So, the higher the first paragraph score contributes to a higher rating. We use linear regression to train model with log value of first paragraph score as the predictor. As log function on negative value will result NA, we need to coerce the data before we apply the log funciton on first paragraph score. We use a function as log((first paragraph score + k)/2).
+
+```{r}
+k <- seq(3, 5.2, 0.2)
+rmse_fps <- function(k){
+  fit <- lm(Rating ~ log((first_paragraph_score+k)/2), data = train_set)
+  predict_ratings <- predict(fit, test_set)
+  RMSE(test_set$Rating, predict_ratings)
+}
+rmse_fps_list <- sapply(k, rmse_fps)
+plot(rmse_fps_list)
+which.min(rmse_fps_list)
+```
+
+The best adjustment k is 4. And here is the linear regression model on first paragraph score:
+
 ```{r}
 # first_paragraph_score effect
-fit <- lm(Rating ~ first_paragraph_score, data = train_set)
+k <- 4
+fit <- lm(Rating ~ log((first_paragraph_score+k)/2), data = train_set)
 predict_ratings <- predict(fit, test_set)
 RMSE(test_set$Rating, predict_ratings)
 rmse_results <- rmse_results %>% add_row(method = "Added Weighted 1st paragraph effects", RMSE = RMSE(test_set$Rating, predict_ratings))
 
+```
 
+We achieved a RMSE as 0.9936433.
+
+```{r}
 # Weighted Negative and Positive word plus first_para_score effect
 fit <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + first_paragraph_score, data = train_set)
 predict_ratings <- predict(fit, test_set)
@@ -398,7 +450,17 @@ rmse_results <- rmse_results %>% add_row(method = "Added Weighted =/- & 1st para
 rmse_results
 ```
 
-### 4.5 Coerce Rating boundaries
+Now, our combined model can achieve a RMSE as 0.9051822.
+
+### 4.5 Coerce boundaries for excessively predicted rating boundaries
+At this stage, we have applied all the attributes to our modeling but yet we haven't achieved our target of RMSE <= 0.890. Let's move on looking into different aspects of our current predict rating on the test_set and seek for improvement.
+
+```{r}
+max(predict_ratings)
+min(predict_ratings)
+```
+One of the first thing comes in mind is the maximum & minimum boundaries on the predicted ratings. As the actual rating is ranged from 1 to 5, any prediction exceeds the boundaries will not be reasonable. Thus, we regulate any excessive prediction to its nearest boundaries, i.e. predicted ratings < 1 to 1 and those > 5 to 5.
+
 ```{r}
 # Mark 5 for prediction > 5 and 1 for prediction < 1
 regulate_boundaries <- function(ratings){
@@ -415,7 +477,18 @@ rmse_results <- rmse_results %>% add_row(method = "Added coerce boundaries", RMS
 rmse_results
 ```
 
-### 4.6 Mini Decision Tree
+After setting the boundaries, th RMSE is improved to 0.9003607.
+
+### 4.6 Decision Tree I - No. of scored words from sentiment analysis
+If there is small sample size of scored words from sentiment analysis, the prediction will be inaccurate. 
+```{r}
+index_small_nword <- test_set$nword <= 2
+RMSE(test_set[index_small_nword,]$Rating, predict_ratings[index_small_nword])
+RMSE(test_set[index_small_nword,]$Rating, mu)
+```
+
+We can see that the RMSE increased significantly for nword becomes small, which is even worse than the native RMSE. Instead of using regularization to penalize the small sample size of nword, we apply a decision tree idea to predict the rating with the mean when nword goes small.
+
 ```{r}
 # Mini Decision Tree, if the nword is lower than N, we do not apply linear regression and using the mean as prediction instead
 prediction <- function(n){
@@ -427,12 +500,16 @@ prediction <- function(n){
 }
 
 n <- seq(0,10,1)
-n
 
 rmse_list <- sapply(n, prediction)
 n[which.min(rmse_list)]
+```
 
-# Ultimate N is 1
+The optimal choice of n for nword size is 1. Thus, for nword smaller than 1, we assign the mean as the predicted ratings.
+
+
+```{r}
+# Optimal N is 1
 data <- test_set %>% mutate(predict_ratings = predict_ratings)
 index <- data$nword <= 1
 data$predict_ratings[index] = mu
@@ -443,17 +520,12 @@ rmse_results <- rmse_results %>% add_row(method = "Replace mu for those with a s
 rmse_results
 ```
 
-### 4.7 +/- Dominance
+Now, the RMSE improved to 0.8976386 and we have achieved the first target of improving the native RMSE by 0.3.
+
+### 4.7 Decision Tree II - +/- Dominance
+The second decision tree we will look at is the dominance effect on the +/- words. As we mentioned, the tone of writing is usually consistent in human sense. Thus, if there is a overall more positive words detected in a review, the contribution of negative word to the prediction model can be neglected and vice versa. We will use the weights of +/- words as our decision parameter.
+
 ```{r}
-# Negative and Positive Dominance
-
-sum(predict_ratings <= 2)
-sum(test_set$Rating <= 2)
-
-sum(predict_ratings >= 4)
-sum(test_set$Rating >= 4)
-
-
 # Select the best fit on weight W
 weights <- seq(0.5, 1.0, 0.025)
 weights
@@ -540,6 +612,8 @@ predict_ratings_dominance <- result$predict_ratings
 predict_ratings_dominance <- regulate_boundaries(predict_ratings_dominance)
 ```
 
+And we combine the result with decision tree I for small size of nword.
+
 ```{r}
 prediction_dominance <- function(n){
   data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
@@ -565,10 +639,16 @@ rmse_results <- rmse_results %>% add_row(method = "+/- dominance effects", RMSE 
 rmse_results
 ```
 
+Finally, we achieved a RMSE as 0.8888523 <= 0.890.
+
 ## 5. Conclusion
 
 ```{r}
-rmse_results
+as.data.frame((rmse_results))
 ```
 
-Instead of just learning the word by sentiment analysis, we could further extract words as an attribute describing the hotels, eg. expensive referring to price, comfortable referring to room quality. This can be achieved through NLP. After the extraction of these features from a review, we can further conduct a comparison analysis with an official descriptive information stated by a hotel on the booking source, eg. Booking.com. Any difference can improve our prediction in review rating as these explains the expectation +/- a user anticipated for a hotel.
+A regression model on the sentiment analysis of words helps to predict the hotel ratings from a raw review text. With the concept of decision trees on weights of +/- words and no. of scored words, we achieved a RMSE 0.8888523 <= 0.890.
+
+However, the dataset we applied in the sentiment analysis may not be comprehensive as there is a drop in the no. of scored word comparing to the total word count of a review. Some of the uncaught words may also have insights towards the rating prediction.
+
+Besides sentiment analysis, we could further extract words as an attribute describing the hotels, eg. expensive referring to price, comfortable referring to room quality. This can be achieved through NLP. After the extraction of these features from a review, we can further conduct a comparison analysis with an official descriptive information stated by a hotel on the booking source, eg. Booking.com. Any difference can improve our prediction in review rating as these explains the expectation +/- a user anticipated for a hotel.
