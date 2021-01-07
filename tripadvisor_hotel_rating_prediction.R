@@ -3,6 +3,8 @@ library(caret)
 library(data.table)
 library(tidytext)
 library(textdata)
+
+# Download dataset 
 url <- "https://raw.githubusercontent.com/OnionOrio/harvard-x-ds/master/DS%20Course/capstone2/tripadvisor_hotel_reviews.csv"
 
 dl <- tempfile()
@@ -156,7 +158,7 @@ first_few_sentence_score <- (compile_sscore(sentence[1,]) + compile_sscore(sente
 
 #Now a function to extract the following data for each reviews
 sentiments_analysis <- function(i){
-  print(i)
+  # print(i) # for debugging use
   
   word_count <- reviews[i,] %>%  unnest_tokens(word, Review) %>% nrow()
   
@@ -188,25 +190,19 @@ sentiments_analysis <- function(i){
 
 # Adding sentimental analysis data to Raw data.
 n <- reviews %>% nrow()
-n
 i <- seq(1:n)
 
 options(dplyr.summarise.inform = FALSE)
 
 sentiments_analysis_data <- do.call(rbind, lapply(i, sentiments_analysis))
-# sentiments_analysis_data_old <- sentiments_analysis_data
 head(sentiments_analysis_data)
 
 df <- sentiments_analysis_data %>% mutate(id = row_number())
 df <- reviews %>% left_join(df, by="id")
 
-df %>% pull(neg_score)
 #Fill NA
 df[is.na(df)] <- 0
 
-df %>% pull(neg_score)
-
-# df_old <- df
 
 # Create Training set and Test set from df
 set.seed(1, sample.kind="Rounding") # if using R 3.5 or earlier, use `set.seed(1)`
@@ -359,6 +355,7 @@ weights <- seq(0.5, 1.0, 0.025)
 weights
 
 rmse_dominance <- sapply(weights, function(weight){
+  # Decision tree splitting the data set according to weight ratio of +/- words
   neg_index <- train_set$neg_weighted >= weight
   train_neg <- train_set[neg_index, ]
   train_temp <- train_set[!neg_index,]
@@ -366,10 +363,12 @@ rmse_dominance <- sapply(weights, function(weight){
   train_plus <- train_temp[plus_index, ]
   train_rest <- train_temp[!plus_index, ]
   
+  # Linear Regression finding the modeling for three sets of data
   fit_neg <- lm(Rating ~ neg_score, data=train_neg)
   fit_plus <- lm(Rating ~ plus_score, data=train_plus)
   fit_rest <- lm(Rating ~ (neg_score*neg_weighted) + (plus_score*plus_weighted) + log((first_paragraph_score+k)/2), data = train_rest)
   
+  # Split of test_set
   neg_index <- test_set$neg_weighted >= weight
   test_neg <- test_set[neg_index, ]
   test_temp <- test_set[!neg_index,]
@@ -377,6 +376,7 @@ rmse_dominance <- sapply(weights, function(weight){
   test_plus <- test_temp[plus_index, ]
   test_rest <- test_temp[!plus_index, ]
   
+  # Predict the result for the split test set and combine results after prediction
   test_neg <- test_neg %>% mutate(predict_ratings = predict(fit_neg, test_neg))
   test_plus <- test_plus %>% mutate(predict_ratings = predict(fit_plus, test_plus))
   test_rest <- test_rest %>% mutate(predict_ratings = predict(fit_rest, test_rest))
@@ -385,9 +385,11 @@ rmse_dominance <- sapply(weights, function(weight){
   
   predict_ratings_dominance <- result$predict_ratings
   
+  
+  # Regulate boundaries of predicted ratings
   predict_ratings_dominance <- regulate_boundaries(predict_ratings_dominance)
   
-  # Ultimate N is 1
+  # Combining Decision tree of no. of words <= N, mu as the prediction
   data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
   index <- data$nword <= 1
   data$predict_ratings[index] = mu
@@ -398,6 +400,8 @@ rmse_dominance <- sapply(weights, function(weight){
 
 plot(weights,rmse_dominance)
 weights[which.min(rmse_dominance)]
+
+# Set weight to the optimal value as 0.875
 
 weight <- 0.875
 neg_index <- train_set$neg_weighted >= weight
@@ -419,19 +423,15 @@ test_plus <- test_temp[plus_index, ]
 test_rest <- test_temp[!plus_index, ]
 
 test_neg <- test_neg %>% mutate(predict_ratings = predict(fit_neg, test_neg))
-test_neg
 
 test_plus <- test_plus %>% mutate(predict_ratings = predict(fit_plus, test_plus))
-test_plus
 
 test_rest <- test_rest %>% mutate(predict_ratings = predict(fit_rest, test_rest))
-test_rest
 
-test_set
 
 result <- rbind(test_neg, test_plus, test_rest) %>% select(id, predict_ratings)
 result <- test_set %>% left_join(result, by="id")
-result
+head(result)
 
 RMSE(result$Rating, result$predict_ratings)
 
@@ -439,7 +439,7 @@ predict_ratings_dominance <- result$predict_ratings
 
 predict_ratings_dominance <- regulate_boundaries(predict_ratings_dominance)
 
-# Ultimate N is 1
+# Combining with decision tree of no. of word <= N, mu as the prediction 
 data <- test_set %>% mutate(predict_ratings = predict_ratings_dominance)
 index <- data$nword <= 1
 data$predict_ratings[index] = mu
@@ -454,5 +454,6 @@ sum(test_set$Rating >= 4)
 
 rmse_results <- rmse_results %>% add_row(method = "+/- dominance effects", RMSE = RMSE(test_set$Rating, predict_ratings_dominance))
 rmse_results
-as.data.frame((rmse_results_old))
+
+# Final results
 as.data.frame((rmse_results))
